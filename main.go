@@ -9,6 +9,14 @@ import (
 	"net/http"
 	"fmt"
 	"io/ioutil"
+	"path"
+	"image/png"
+	"image/jpeg"
+	"strings"
+	"image"
+	"golang.org/x/image/bmp"
+	"bufio"
+	"bytes"
 )
 
 func main() {
@@ -32,11 +40,23 @@ func HelloHandler(ctx context.Context, bot *slackbot.Bot, evt *slack.MessageEven
 			log.Fatal(err)
 		}
 
-		bytes, err := ioutil.ReadAll(res.Body)
+		ext := path.Ext(evt.File.URLPrivate)
+		var src image.Image
+		switch strings.ToLower(ext) {
+		case "png":
+			src, err = png.Decode(res.Body)
+		case "jpg", "jpeg":
+			src, err = jpeg.Decode(res.Body)
+
 		if err != nil {
 			log.Fatalln(err)
 		}
 
-		ioutil.WriteFile("upload.jpg", bytes, 0755)
+		var bmpBuffer bytes.Buffer
+		bmpOut := bufio.NewWriter(&bmpBuffer)
+
+		err = bmp.Encode(bmpOut, src)
+
+		ioutil.WriteFile("upload.bmp", bmpBuffer.Bytes(), 0755)
 	}
 }
