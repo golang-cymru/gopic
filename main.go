@@ -8,19 +8,27 @@ import (
 	"log"
 	"net/http"
 	"fmt"
-	"io/ioutil"
-	"path"
 	"image/png"
 	"image/jpeg"
-	"strings"
+	"image/gif"
 	"image"
 	"golang.org/x/image/bmp"
-	"bufio"
 	"bytes"
+	"gocv.io/x/gocv"
+	"io/ioutil"
+	"image/color"
+	"path"
 )
+
+var classifier gocv.CascadeClassifier
 
 func main() {
 	bot := slackbot.New(os.Getenv("SLACK_KEY"))
+
+	classifier = gocv.NewCascadeClassifier()
+	defer classifier.Close()
+
+	classifier.Load("haarcascade_frontalface_default.xml")
 
 	toMe := bot.Messages(slackbot.DirectMention, slackbot.DirectMessage).Subrouter()
 	toMe.Hear("(?)").MessageHandler(HelloHandler)
@@ -40,23 +48,66 @@ func HelloHandler(ctx context.Context, bot *slackbot.Bot, evt *slack.MessageEven
 			log.Fatal(err)
 		}
 
-		ext := path.Ext(evt.File.URLPrivate)
+		buf, _ := ioutil.ReadAll(res.Body)
+		rdr1 := ioutil.NopCloser(bytes.NewBuffer(buf))
+		rdr2 := ioutil.NopCloser(bytes.NewBuffer(buf))
+
 		var src image.Image
-		switch strings.ToLower(ext) {
+		_, format, err := image.DecodeConfig(rdr1)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		switch format {
 		case "png":
-			src, err = png.Decode(res.Body)
-		case "jpg", "jpeg":
-			src, err = jpeg.Decode(res.Body)
+			src, err = png.Decode(rdr2)
+		case "jpeg":
+			src, err = jpeg.Decode(rdr2)
+		case "gif":
+			src, err = gif.Decode(rdr2)
+		}
 
 		if err != nil {
 			log.Fatalln(err)
 		}
 
-		var bmpBuffer bytes.Buffer
-		bmpOut := bufio.NewWriter(&bmpBuffer)
+		bmpIn := new(bytes.Buffer)
+		err = bmp.Encode(bmpIn, src)
+		if err != nil {
+			log.Fatalln(err)
+		}
 
-		err = bmp.Encode(bmpOut, src)
+		cvImg := gocv.IMDecode(bmpIn.Bytes(), gocv.IMReadColor)
+		defer cvImg.Close()
 
-		ioutil.WriteFile("upload.bmp", bmpBuffer.Bytes(), 0755)
+		if cvImg.Empty() {
+			return
+		}
+
+		rects := classifier.DetectMultiScale(cvImg)
+		fmt.Printf("found %d faces\n", len(rects))
+		blue := color.RGBA{R: 0, G: 0, B: 255, A: 0}
+
+		for _, r := range rects {
+			gocv.Rectangle(cvImg, r, blue, 3)
+		}
+
+		outBmp, err := gocv.IMEncode(".bmp", cvImg)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		outBmpBuf := bytes.NewBuffer(outBmp)
+
+		outImg, err := bmp.Decode(outBmpBuf)
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		jpegOut := new(bytes.Buffer)
+		err = jpeg.Encode(jpegOut, outImg, &jpeg.Options{Quality:95})
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		ioutil.WriteFile("upload.jpg", jpegOut.Bytes(), 0755)
 	}
 }
