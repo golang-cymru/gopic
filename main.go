@@ -40,12 +40,14 @@ func HelloHandler(ctx context.Context, bot *slackbot.Bot, evt *slack.MessageEven
 		client := &http.Client{}
 		req, err := http.NewRequest("GET", evt.File.URLPrivate, nil)
 		if err != nil {
-			log.Fatalln(err)
+			log.Println(err)
+			return
 		}
 		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", os.Getenv("SLACK_KEY")))
 		res, err := client.Do(req)
-		if err != nil{
-			log.Fatal(err)
+		if err != nil {
+			log.Println(err)
+			return
 		}
 
 		buf, _ := ioutil.ReadAll(res.Body)
@@ -67,13 +69,15 @@ func HelloHandler(ctx context.Context, bot *slackbot.Bot, evt *slack.MessageEven
 		}
 
 		if err != nil {
-			log.Fatalln(err)
+			log.Println(err)
+			return
 		}
 
 		bmpIn := new(bytes.Buffer)
 		err = bmp.Encode(bmpIn, src)
 		if err != nil {
-			log.Fatalln(err)
+			log.Println(err)
+			return
 		}
 
 		cvImg := gocv.IMDecode(bmpIn.Bytes(), gocv.IMReadColor)
@@ -84,7 +88,6 @@ func HelloHandler(ctx context.Context, bot *slackbot.Bot, evt *slack.MessageEven
 		}
 
 		rects := classifier.DetectMultiScale(cvImg)
-		fmt.Printf("found %d faces\n", len(rects))
 		blue := color.RGBA{R: 0, G: 0, B: 255, A: 0}
 
 		for _, r := range rects {
@@ -93,21 +96,33 @@ func HelloHandler(ctx context.Context, bot *slackbot.Bot, evt *slack.MessageEven
 
 		outBmp, err := gocv.IMEncode(".bmp", cvImg)
 		if err != nil {
-			log.Fatalln(err)
+			log.Println(err)
+			return
 		}
 		outBmpBuf := bytes.NewBuffer(outBmp)
 
 		outImg, err := bmp.Decode(outBmpBuf)
 		if err != nil {
-			log.Fatalln(err)
+			log.Println(err)
+			return
 		}
 
 		jpegOut := new(bytes.Buffer)
 		err = jpeg.Encode(jpegOut, outImg, &jpeg.Options{Quality:95})
 		if err != nil {
-			log.Fatalln(err)
+			log.Println(err)
+			return
 		}
 
-		ioutil.WriteFile("upload.jpg", jpegOut.Bytes(), 0755)
+		fileOptions := slack.FileUploadParameters{
+			Filename: path.Base(evt.File.URLPrivate),
+			Reader: jpegOut,
+			Channels: []string{evt.Channel},
+		}
+		_, err = bot.Client.UploadFile(fileOptions)
+		if err != nil {
+			log.Println(err)
+			return
+		}
 	}
 }
